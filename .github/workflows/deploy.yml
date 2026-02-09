@@ -1,0 +1,33 @@
+name: Deploy to VPS
+
+# 當 push 到 main 分支時自動觸發部署
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to DigitalOcean
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: root
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            cd /root/ecom-image-gen
+
+            echo "📥 Pulling latest code..."
+            git pull origin main
+
+            echo "🔨 Rebuilding containers..."
+            docker compose up -d --build
+
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f
+
+            echo "✅ Deployment complete!"
+            curl -s http://localhost/api/health

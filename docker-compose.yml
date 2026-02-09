@@ -1,0 +1,54 @@
+services:
+  # ── FastAPI Backend ──
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      - CORS_ORIGINS=http://localhost,https://${DOMAIN:-localhost}
+    volumes:
+      - uploads:/app/uploads
+      - outputs:/app/outputs
+      - db-data:/app/data
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ── Next.js Frontend ──
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+
+  # ── Nginx Reverse Proxy ──
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Uncomment below after setting up SSL with certbot
+      # - ./certbot/conf:/etc/letsencrypt:ro
+      # - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    networks:
+      - internal
+
+volumes:
+  uploads:
+  outputs:
+  db-data:
+
+networks:
+  internal:
+    driver: bridge

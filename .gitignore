@@ -1,0 +1,27 @@
+# ── Environment & Secrets ──
+.env
+backend/.env
+backend/.api_keys.json
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+backend/venv/
+
+# ── Node.js ──
+node_modules/
+frontend/.next/
+frontend/tsconfig.tsbuildinfo
+
+# ── Data (user uploads & generated images) ──
+backend/uploads/
+backend/outputs/
+backend/data/
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── SSL certificates ──
+certbot/
