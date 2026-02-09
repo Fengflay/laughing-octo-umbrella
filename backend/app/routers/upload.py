@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from PIL import Image as PILImage
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_optional_user
 from app.config import ALLOWED_EXTENSIONS, MAX_UPLOAD_SIZE, UPLOAD_DIR
 from app.database import get_db
 from app.models.db_models import UploadedImage, User
@@ -24,9 +24,9 @@ router = APIRouter(prefix="/api", tags=["upload"])
 async def upload_image(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_user),
 ):
-    """Upload a product image. Requires authentication."""
+    """Upload a product image. Works with or without authentication."""
     # Validate file extension
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -59,18 +59,19 @@ async def upload_image(
     file_path = UPLOAD_DIR / filename
     file_path.write_bytes(content)
 
-    # Persist upload record to DB
-    try:
-        upload_record = UploadedImage(
-            id=image_id,
-            user_id=user.id,
-            filename=filename,
-            file_path=str(file_path),
-        )
-        db.add(upload_record)
-        await db.commit()
-    except Exception:
-        pass  # Non-critical: file is saved even if DB record fails
+    # Persist upload record to DB (only if user is logged in)
+    if user:
+        try:
+            upload_record = UploadedImage(
+                id=image_id,
+                user_id=user.id,
+                filename=filename,
+                file_path=str(file_path),
+            )
+            db.add(upload_record)
+            await db.commit()
+        except Exception:
+            pass  # Non-critical: file is saved even if DB record fails
 
     return UploadResponse(
         image_id=image_id,
@@ -83,9 +84,9 @@ async def upload_image(
 async def remove_bg(
     image_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_user),
 ):
-    """Remove background from uploaded image. Requires authentication."""
+    """Remove background from uploaded image. Works with or without authentication."""
     # Find the uploaded image
     matching = list(UPLOAD_DIR.glob(f"{image_id}.*"))
     if not matching:
@@ -104,18 +105,19 @@ async def remove_bg(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Background removal failed: {e}")
 
-    # Update DB record with nobg_path
-    try:
-        from sqlalchemy import update
-        from app.models.db_models import UploadedImage as UploadedImageModel
-        await db.execute(
-            update(UploadedImageModel)
-            .where(UploadedImageModel.id == image_id)
-            .values(nobg_path=str(output_path))
-        )
-        await db.commit()
-    except Exception:
-        pass  # Non-critical
+    # Update DB record with nobg_path (only if user is logged in)
+    if user:
+        try:
+            from sqlalchemy import update
+            from app.models.db_models import UploadedImage as UploadedImageModel
+            await db.execute(
+                update(UploadedImageModel)
+                .where(UploadedImageModel.id == image_id)
+                .values(nobg_path=str(output_path))
+            )
+            await db.commit()
+        except Exception:
+            pass  # Non-critical
 
     return RemoveBgResponse(
         image_id=image_id,

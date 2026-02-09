@@ -275,45 +275,29 @@ export default function HomePage() {
       {/* Generate button */}
       {uploadResult && selectedType && (
         <section className="text-center py-4 animate-slide-up">
-          {user ? (
-            <>
-              <button
-                onClick={handleGenerate}
-                className="group relative inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-lg font-bold rounded-2xl hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5"
-              >
-                <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                <span>一鍵生成 9 張產品圖</span>
-                {selectedStyle && (
-                  <span className="text-sm opacity-80 font-normal">
-                    ({styles.find(s => s.id === selectedStyle)?.name})
-                  </span>
-                )}
-              </button>
-              <p className="text-xs text-gray-400 mt-3">
-                {selectedTypeName && (
-                  <>品類: <span className="text-gray-600">{selectedTypeName}</span> · </>
-                )}
-                消耗約 9 點 · 餘額 <span className="text-amber-600 font-medium">{user.credits} 點</span> · 預計 1-3 分鐘完成
-              </p>
-            </>
-          ) : (
-            <>
-              <a
-                href="/login"
-                className="group relative inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-lg font-bold rounded-2xl hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
-                </svg>
-                <span>登入後開始生成</span>
-              </a>
-              <p className="text-xs text-gray-400 mt-3">
-                免費註冊即贈 50 點，可生成約 5 組產品圖
-              </p>
-            </>
-          )}
+          <button
+            onClick={handleGenerate}
+            className="group relative inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-lg font-bold rounded-2xl hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5"
+          >
+            <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span>一鍵生成 9 張產品圖</span>
+            {selectedStyle && (
+              <span className="text-sm opacity-80 font-normal">
+                ({styles.find(s => s.id === selectedStyle)?.name})
+              </span>
+            )}
+          </button>
+          <p className="text-xs text-gray-400 mt-3">
+            {selectedTypeName && (
+              <>品類: <span className="text-gray-600">{selectedTypeName}</span> · </>
+            )}
+            {user ? (
+              <>消耗約 9 點 · 餘額 <span className="text-amber-600 font-medium">{user.credits} 點</span> · </>
+            ) : null}
+            預計 1-3 分鐘完成
+          </p>
         </section>
       )}
 

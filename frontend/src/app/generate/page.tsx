@@ -339,7 +339,7 @@ function GenerateContent() {
           <div className="text-center space-y-2">
             <button
               onClick={handleGenerate}
-              disabled={selectedCount === 0 || (user !== null && user.credits < selectedCount)}
+              disabled={selectedCount === 0 || (user !== null && user !== undefined && user.credits < selectedCount)}
               className="group inline-flex items-center gap-3 px-10 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-lg font-bold rounded-2xl hover:from-blue-700 hover:to-blue-800 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
             >
               <svg className="w-5 h-5 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -367,7 +367,7 @@ function GenerateContent() {
             )}
             {!user && (
               <p className="text-xs text-gray-400">
-                需要<a href="/login" className="text-blue-500 hover:text-blue-600 mx-0.5">登入</a>才能生成圖片
+                免費使用中 · <a href="/login" className="text-blue-500 hover:text-blue-600 mx-0.5">登入</a>可追蹤點數與歷史紀錄
               </p>
             )}
           </div>

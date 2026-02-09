@@ -11,7 +11,7 @@ from PIL import Image
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import config
-from app.auth import get_current_user, get_optional_user
+from app.auth import get_optional_user
 from app.config import CREDIT_PER_IMAGE, OUTPUT_DIR, UPLOAD_DIR
 from app.database import get_db
 from app.models.db_models import User
@@ -108,9 +108,9 @@ async def get_templates(product_type: str):
 async def start_generation(
     request: GenerateRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_user),
 ):
-    """Start image generation task. Requires authentication."""
+    """Start image generation task. Works with or without authentication."""
     if not config.GEMINI_API_KEY:
         raise HTTPException(
             status_code=400,
@@ -164,20 +164,23 @@ async def start_generation(
         templates = [t for t in templates if t.id in selected_set]
     image_count = len(templates)
 
-    # Check & charge credits (mandatory)
+    # Check & charge credits (only if user is logged in)
     credits_needed = image_count * CREDIT_PER_IMAGE
-    has_balance = await credit_service.check_balance(db, user.id, credits_needed)
-    if not has_balance:
-        balance = await credit_service.get_balance(db, user.id)
-        raise HTTPException(
-            status_code=402,
-            detail=f"點數不足：需要 {credits_needed} 點，目前餘額 {balance} 點",
+    credits_remaining = 0
+    if user:
+        has_balance = await credit_service.check_balance(db, user.id, credits_needed)
+        if not has_balance:
+            balance = await credit_service.get_balance(db, user.id)
+            raise HTTPException(
+                status_code=402,
+                detail=f"點數不足：需要 {credits_needed} 點，目前餘額 {balance} 點",
+            )
+        # Charge credits
+        await credit_service.charge_credits(
+            db, user.id, credits_needed,
+            description=f"生成 {image_count} 張圖片（{request.product_type.value}）",
         )
-    # Charge credits
-    await credit_service.charge_credits(
-        db, user.id, credits_needed,
-        description=f"生成 {image_count} 張圖片（{request.product_type.value}）",
-    )
+        credits_remaining = await credit_service.get_balance(db, user.id)
 
     task = generation_service.create_task(
         image_path=image_path,
@@ -185,7 +188,7 @@ async def start_generation(
         template_overrides=template_overrides,
         selected_template_ids=request.selected_template_ids,
         style=request.style,
-        user_id=user.id,
+        user_id=user.id if user else None,
     )
 
     # Persist to DB
@@ -195,8 +198,8 @@ async def start_generation(
         task_id=task.task_id,
         status=task.status,
         total=task.total,
-        credits_charged=credits_needed,
-        credits_remaining=await credit_service.get_balance(db, user.id),
+        credits_charged=credits_needed if user else 0,
+        credits_remaining=credits_remaining,
     )
 
 
@@ -336,24 +339,25 @@ async def regenerate_image(
     task_id: str,
     request: RegenerateRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_user),
 ):
-    """Regenerate a single image within an existing task. Requires authentication."""
+    """Regenerate a single image within an existing task. Works with or without authentication."""
     task = generation_service.get_task(task_id)
     if not task:
         task = await generation_service.get_task_from_db(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Charge 1 credit for regeneration
-    has_balance = await credit_service.check_balance(db, user.id, CREDIT_PER_IMAGE)
-    if not has_balance:
-        raise HTTPException(status_code=402, detail="點數不足，無法重新生成")
-    await credit_service.charge_credits(
-        db, user.id, CREDIT_PER_IMAGE,
-        description=f"重新生成圖片（{request.template_id}）",
-        job_id=task_id,
-    )
+    # Charge 1 credit for regeneration (only if user is logged in)
+    if user:
+        has_balance = await credit_service.check_balance(db, user.id, CREDIT_PER_IMAGE)
+        if not has_balance:
+            raise HTTPException(status_code=402, detail="點數不足，無法重新生成")
+        await credit_service.charge_credits(
+            db, user.id, CREDIT_PER_IMAGE,
+            description=f"重新生成圖片（{request.template_id}）",
+            job_id=task_id,
+        )
 
     try:
         result = await generation_service.regenerate_single(
@@ -369,15 +373,16 @@ async def regenerate_image(
             "error": result.error,
         }
     except Exception as e:
-        # Refund credit on failure
-        try:
-            await credit_service.refund_credits(
-                db, user.id, CREDIT_PER_IMAGE,
-                description=f"重新生成失敗退費（{request.template_id}）",
-                job_id=task_id,
-            )
-        except Exception:
-            pass
+        # Refund credit on failure (only if user is logged in)
+        if user:
+            try:
+                await credit_service.refund_credits(
+                    db, user.id, CREDIT_PER_IMAGE,
+                    description=f"重新生成失敗退費（{request.template_id}）",
+                    job_id=task_id,
+                )
+            except Exception:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -386,9 +391,9 @@ async def generate_variants(
     task_id: str,
     template_id: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User | None = Depends(get_optional_user),
 ):
-    """Generate 4 variant images for a single template. Requires authentication."""
+    """Generate 4 variant images for a single template. Works with or without authentication."""
     task = generation_service.get_task(task_id)
     if not task:
         task = await generation_service.get_task_from_db(task_id)
@@ -397,16 +402,17 @@ async def generate_variants(
 
     variant_count = 4
 
-    # Charge credits for variants
-    credits_needed = variant_count * CREDIT_PER_IMAGE
-    has_balance = await credit_service.check_balance(db, user.id, credits_needed)
-    if not has_balance:
-        raise HTTPException(status_code=402, detail=f"點數不足：需要 {credits_needed} 點")
-    await credit_service.charge_credits(
-        db, user.id, credits_needed,
-        description=f"生成 {variant_count} 個變體（{template_id}）",
-        job_id=task_id,
-    )
+    # Charge credits for variants (only if user is logged in)
+    if user:
+        credits_needed = variant_count * CREDIT_PER_IMAGE
+        has_balance = await credit_service.check_balance(db, user.id, credits_needed)
+        if not has_balance:
+            raise HTTPException(status_code=402, detail=f"點數不足：需要 {credits_needed} 點")
+        await credit_service.charge_credits(
+            db, user.id, credits_needed,
+            description=f"生成 {variant_count} 個變體（{template_id}）",
+            job_id=task_id,
+        )
 
     try:
         variants = await generation_service.generate_variants(
