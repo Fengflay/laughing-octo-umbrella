@@ -26,6 +26,12 @@
   --color-surface-tertiary: #f1f5f9;
   --color-border: #e2e8f0;
   --color-border-light: #f1f5f9;
+
+  /* --- Premium shadow system --- */
+  --shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+  --shadow-float: 0 20px 40px -4px rgba(0, 0, 0, 0.1);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.25);
+  --shadow-inner-light: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 /* Smooth scrolling */
@@ -33,10 +39,16 @@ html {
   scroll-behavior: smooth;
 }
 
-/* Better font rendering */
+/* --- Global background & font --- */
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc;
+  background-image:
+    radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.04), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(147, 51, 234, 0.04), transparent 25%);
+  background-attachment: fixed;
+  color: #1e293b;
 }
 
 /* Custom scrollbar */
@@ -181,4 +193,66 @@ body {
     linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* --- Premium card --- */
+.premium-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 20px;
+  box-shadow: var(--shadow-soft);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.premium-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-float);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+/* Selected state: glow instead of thick border */
+.premium-card-selected {
+  position: relative;
+  box-shadow: var(--shadow-glow), var(--shadow-soft);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* --- Glass panel --- */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: var(--shadow-float);
+}
+
+/* --- Primary button (glossy) --- */
+.btn-primary {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  box-shadow: 0 4px 14px 0 rgba(37, 99, 235, 0.3), var(--shadow-inner-light);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px 0 rgba(37, 99, 235, 0.45), var(--shadow-inner-light);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* Button sheen animation */
+.btn-primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: 0.5s;
+}
+.btn-primary:hover::after {
+  left: 100%;
 }
