@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 import uuid
@@ -10,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import AsyncGenerator
 
+import aiofiles
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from app.config import CREDIT_PER_IMAGE, OUTPUT_DIR, MAX_CONCURRENT_GENERATIONS
 from app.database import AsyncSessionLocal
 from app.models.db_models import GeneratedImage as DBGeneratedImage, GenerationJob
 from app.services import gemini_service, kimi_service
+from app.services.image_processing import optimize_for_shopee
 from app.templates.registry import SceneTemplate, TemplateRegistry
 from app.templates.styles.registry import InjectionLevel, StyleRegistry
 
@@ -69,6 +72,7 @@ class GenerationTask:
     style: str | None = None
     created_at: float = field(default_factory=time.time)
     user_id: str | None = None  # Linked user (None for anonymous/legacy)
+    shopee_optimize: bool = False  # Apply Shopee image optimization post-generation
 
 
 # In-memory task storage with ordered insertion for efficient cleanup
@@ -97,6 +101,7 @@ def create_task(
     selected_template_ids: list[str] | None = None,
     style: str | None = None,
     user_id: str | None = None,
+    shopee_optimize: bool = False,
 ) -> GenerationTask:
     """Create a generation task for selected (or all) templates."""
     _cleanup_old_tasks()
@@ -131,6 +136,7 @@ def create_task(
         total=len(results),
         style=style,
         user_id=user_id,
+        shopee_optimize=shopee_optimize,
     )
     _tasks[task_id] = task
     return task
@@ -372,7 +378,9 @@ async def run_generation(
 
     # Pre-load product image bytes once — avoids repeated disk reads for every
     # generation call within the batch (9 reads → 1 read).
-    product_image_bytes = task.image_path.read_bytes()
+    # Use aiofiles to avoid blocking the event loop on disk I/O.
+    async with aiofiles.open(task.image_path, "rb") as f:
+        product_image_bytes = await f.read()
     logger.info(f"Pre-loaded product image ({len(product_image_bytes)} bytes) for batch generation")
 
     # Use an Event to signal when any single image finishes
@@ -419,7 +427,16 @@ async def run_generation(
 
                 output_filename = f"{template.id}.png"
                 output_path = task_output_dir / output_filename
-                output_path.write_bytes(image_bytes)
+                async with aiofiles.open(output_path, "wb") as f:
+                    await f.write(image_bytes)
+
+                # Apply Shopee optimization if requested
+                if task.shopee_optimize:
+                    loop = asyncio.get_running_loop()
+                    optimized = await loop.run_in_executor(
+                        None, optimize_for_shopee, str(output_path),
+                    )
+                    output_path = Path(optimized)
 
                 result.status = ImageStatus.COMPLETED
                 result.output_path = str(output_path)
@@ -447,7 +464,17 @@ async def run_generation(
                         )
                     output_filename = f"{template.id}.png"
                     output_path = task_output_dir / output_filename
-                    output_path.write_bytes(image_bytes)
+                    async with aiofiles.open(output_path, "wb") as f:
+                        await f.write(image_bytes)
+
+                    # Apply Shopee optimization if requested
+                    if task.shopee_optimize:
+                        loop = asyncio.get_running_loop()
+                        optimized = await loop.run_in_executor(
+                            None, optimize_for_shopee, str(output_path),
+                        )
+                        output_path = Path(optimized)
+
                     result.status = ImageStatus.COMPLETED
                     result.output_path = str(output_path)
                     logger.info(f"Generated {template.id} on retry")
@@ -581,7 +608,8 @@ async def regenerate_single(
             aspect_ratio=template.aspect_ratio,
         )
         output_path = task_output_dir / f"{template_id}.png"
-        output_path.write_bytes(image_bytes)
+        async with aiofiles.open(output_path, "wb") as f:
+            await f.write(image_bytes)
         result.status = ImageStatus.COMPLETED
         result.output_path = str(output_path)
         logger.info(f"Regenerated {template_id} successfully")
@@ -638,8 +666,9 @@ async def generate_variants(
     task_output_dir = OUTPUT_DIR / task_id
     task_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Pre-load product image once
-    product_image_bytes = task.image_path.read_bytes()
+    # Pre-load product image once (non-blocking)
+    async with aiofiles.open(task.image_path, "rb") as f:
+        product_image_bytes = await f.read()
 
     # Generate variants concurrently (max 4 at once)
     semaphore = asyncio.Semaphore(count)
@@ -655,7 +684,8 @@ async def generate_variants(
                 )
                 filename = f"{template_id}_v{idx}.png"
                 output_path = task_output_dir / filename
-                output_path.write_bytes(image_bytes)
+                async with aiofiles.open(output_path, "wb") as f:
+                    await f.write(image_bytes)
                 variants.append({
                     "variant_index": idx,
                     "url": f"/api/outputs/{task_id}/{filename}",
@@ -694,9 +724,10 @@ async def select_variant(
     if not variant_path.exists():
         raise RuntimeError(f"Variant {variant_index} not found for {template_id}")
 
-    # Copy variant to main path
+    # Copy variant to main path (non-blocking)
+    loop = asyncio.get_running_loop()
     import shutil
-    shutil.copy2(variant_path, main_path)
+    await loop.run_in_executor(None, functools.partial(shutil.copy2, variant_path, main_path))
 
     # Update the result entry
     result = None

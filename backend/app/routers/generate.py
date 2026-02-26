@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import io
 import json
 import zipfile
@@ -189,6 +191,7 @@ async def start_generation(
         selected_template_ids=request.selected_template_ids,
         style=request.style,
         user_id=user.id if user else None,
+        shopee_optimize=(request.platform == "shopee"),
     )
 
     # Persist to DB
@@ -292,6 +295,55 @@ async def get_results(task_id: str):
     )
 
 
+def _resize_image_for_platform(
+    output_path: str,
+    target_w: int,
+    target_h: int,
+) -> tuple[str, bytes]:
+    """Resize a single image to fit the platform spec (CPU-bound, sync).
+
+    Returns (filename, png_bytes).
+    """
+    img = Image.open(output_path)
+    img.thumbnail((target_w, target_h), Image.LANCZOS)
+    canvas = Image.new("RGB", (target_w, target_h), (255, 255, 255))
+    paste_x = (target_w - img.width) // 2
+    paste_y = (target_h - img.height) // 2
+    if img.mode == "RGBA":
+        canvas.paste(img, (paste_x, paste_y), img)
+    else:
+        canvas.paste(img, (paste_x, paste_y))
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _build_zip_bytes(
+    results: list,
+    spec_width: int,
+    spec_height: int,
+    platform: str,
+    optimize_shopee: bool = False,
+) -> bytes:
+    """Build a zip archive from results (CPU-bound, sync)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for r in results:
+            if r.output_path and Path(r.output_path).exists():
+                png_bytes = _resize_image_for_platform(
+                    r.output_path, spec_width, spec_height,
+                )
+                filename = f"{r.template_id}_{spec_width}x{spec_height}.png"
+
+                if optimize_shopee:
+                    from app.services.image_processing import optimize_bytes_for_shopee
+                    png_bytes, ext = optimize_bytes_for_shopee(png_bytes)
+                    filename = f"{r.template_id}_{spec_width}x{spec_height}.{ext}"
+
+                zf.writestr(filename, png_bytes)
+    return buf.getvalue()
+
+
 @router.get("/download/{task_id}")
 async def download_all(task_id: str, platform: str = "general"):
     """Download all generated images as a zip file, optionally resized for platform."""
@@ -302,31 +354,23 @@ async def download_all(task_id: str, platform: str = "general"):
         raise HTTPException(status_code=404, detail="Task not found")
 
     spec = PLATFORM_SPECS.get(platform, PLATFORM_SPECS["general"])
-    task_output_dir = OUTPUT_DIR / task_id
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for r in task.results:
-            if r.output_path and Path(r.output_path).exists():
-                img = Image.open(r.output_path)
-                # Contain resize: fit within target size, then center on white bg
-                target_w, target_h = spec.width, spec.height
-                img.thumbnail((target_w, target_h), Image.LANCZOS)
-                canvas = Image.new("RGB", (target_w, target_h), (255, 255, 255))
-                paste_x = (target_w - img.width) // 2
-                paste_y = (target_h - img.height) // 2
-                # Handle RGBA images (from background removal)
-                if img.mode == "RGBA":
-                    canvas.paste(img, (paste_x, paste_y), img)
-                else:
-                    canvas.paste(img, (paste_x, paste_y))
-                img_buf = io.BytesIO()
-                canvas.save(img_buf, format="PNG")
-                zf.writestr(f"{r.template_id}_{target_w}x{target_h}.png", img_buf.getvalue())
+    # Run CPU-intensive image processing + zip creation off the event loop
+    loop = asyncio.get_running_loop()
+    zip_bytes = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _build_zip_bytes,
+            results=task.results,
+            spec_width=spec.width,
+            spec_height=spec.height,
+            platform=platform,
+            optimize_shopee=(platform == "shopee"),
+        ),
+    )
 
-    buf.seek(0)
     return StreamingResponse(
-        buf,
+        io.BytesIO(zip_bytes),
         media_type="application/zip",
         headers={
             "Content-Disposition": f"attachment; filename=product_images_{task_id}_{platform}.zip",
@@ -456,52 +500,27 @@ async def select_variant(task_id: str, request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/composite/{task_id}")
-async def composite_grid(task_id: str, request: CompositeRequest):
-    """Composite all completed images into a single grid image (server-side)."""
+def _process_composite_image(
+    completed: dict,
+    ordered_ids: list[str],
+    count: int,
+    cell: int,
+    gap: int,
+    layout: str,
+    bg_r: int,
+    bg_g: int,
+    bg_b: int,
+) -> bytes:
+    """Build a composite image from completed results (CPU-bound, sync).
+
+    Returns PNG bytes.
+    """
     import math
 
-    task = generation_service.get_task(task_id)
-    if not task:
-        task = await generation_service.get_task_from_db(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    # Collect completed images in the requested order
-    completed = {
-        r.template_id: r
-        for r in task.results
-        if r.status.value == "completed" and r.output_path and Path(r.output_path).exists()
-    }
-    if not completed:
-        raise HTTPException(status_code=400, detail="No completed images to composite")
-
-    # Determine image order
-    if request.image_order:
-        ordered_ids = [tid for tid in request.image_order if tid in completed]
-    else:
-        ordered_ids = list(completed.keys())
-
-    count = min(len(ordered_ids), 9)
-    if count == 0:
-        raise HTTPException(status_code=400, detail="No valid images for composite")
-
-    cell = request.cell_size
-    gap = request.gap
     cols = 3
-    layout = request.layout
 
-    # Parse background color
-    bg_hex = request.bg_color.lstrip("#")
-    try:
-        bg_r, bg_g, bg_b = int(bg_hex[0:2], 16), int(bg_hex[2:4], 16), int(bg_hex[4:6], 16)
-    except (ValueError, IndexError):
-        bg_r, bg_g, bg_b = 255, 255, 255
-
-    # --- detail_long: true vertical long image (single column, preserve aspect ratio) ---
     if layout == "detail_long":
-        target_w = cell  # uniform width (e.g. 800px)
-        # First pass: load & resize all images to target_w, collect heights
+        target_w = cell
         resized_images: list[Image.Image] = []
         for i in range(count):
             tid = ordered_ids[i]
@@ -514,7 +533,6 @@ async def composite_grid(task_id: str, request: CompositeRequest):
                     img = bg_img
                 elif img.mode != "RGB":
                     img = img.convert("RGB")
-                # Scale width to target_w, keep aspect ratio
                 scale = target_w / img.width
                 new_h = int(img.height * scale)
                 img = img.resize((target_w, new_h), Image.LANCZOS)
@@ -523,7 +541,7 @@ async def composite_grid(task_id: str, request: CompositeRequest):
                 continue
 
         if not resized_images:
-            raise HTTPException(status_code=400, detail="No valid images for composite")
+            return b""
 
         total_h = sum(im.height for im in resized_images) + gap * (len(resized_images) - 1)
         canvas = Image.new("RGB", (target_w, total_h), (bg_r, bg_g, bg_b))
@@ -531,9 +549,7 @@ async def composite_grid(task_id: str, request: CompositeRequest):
         for im in resized_images:
             canvas.paste(im, (0, y_offset))
             y_offset += im.height + gap
-
     else:
-        # --- grid3x3 & hero_center ---
         if layout == "hero_center":
             rows = 3
         else:
@@ -578,7 +594,6 @@ async def composite_grid(task_id: str, request: CompositeRequest):
             x = col * (cell + gap)
             y = row * (cell + gap)
 
-            # Cover-fit the image into the cell
             scale = max(w / img.width, h / img.height)
             new_w = int(img.width * scale)
             new_h = int(img.height * scale)
@@ -589,14 +604,68 @@ async def composite_grid(task_id: str, request: CompositeRequest):
 
             canvas.paste(img, (x, y))
 
-    # Save to buffer
     buf = io.BytesIO()
     canvas.save(buf, format="PNG", quality=95)
-    buf.seek(0)
+    return buf.getvalue()
 
-    filename = f"composite_{task_id}_{layout}.png"
+
+@router.post("/composite/{task_id}")
+async def composite_grid(task_id: str, request: CompositeRequest):
+    """Composite all completed images into a single grid image (server-side)."""
+    task = generation_service.get_task(task_id)
+    if not task:
+        task = await generation_service.get_task_from_db(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Collect completed images in the requested order
+    completed = {
+        r.template_id: r
+        for r in task.results
+        if r.status.value == "completed" and r.output_path and Path(r.output_path).exists()
+    }
+    if not completed:
+        raise HTTPException(status_code=400, detail="No completed images to composite")
+
+    if request.image_order:
+        ordered_ids = [tid for tid in request.image_order if tid in completed]
+    else:
+        ordered_ids = list(completed.keys())
+
+    count = min(len(ordered_ids), 9)
+    if count == 0:
+        raise HTTPException(status_code=400, detail="No valid images for composite")
+
+    bg_hex = request.bg_color.lstrip("#")
+    try:
+        bg_r, bg_g, bg_b = int(bg_hex[0:2], 16), int(bg_hex[2:4], 16), int(bg_hex[4:6], 16)
+    except (ValueError, IndexError):
+        bg_r, bg_g, bg_b = 255, 255, 255
+
+    # Run CPU-intensive PIL compositing off the event loop
+    loop = asyncio.get_running_loop()
+    png_bytes = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _process_composite_image,
+            completed=completed,
+            ordered_ids=ordered_ids,
+            count=count,
+            cell=request.cell_size,
+            gap=request.gap,
+            layout=request.layout,
+            bg_r=bg_r,
+            bg_g=bg_g,
+            bg_b=bg_b,
+        ),
+    )
+
+    if not png_bytes:
+        raise HTTPException(status_code=400, detail="No valid images for composite")
+
+    filename = f"composite_{task_id}_{request.layout}.png"
     return StreamingResponse(
-        buf,
+        io.BytesIO(png_bytes),
         media_type="image/png",
         headers={
             "Content-Disposition": f"attachment; filename={filename}",

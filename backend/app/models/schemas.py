@@ -90,6 +90,7 @@ class GenerateRequest(BaseModel):
     style: Optional[str] = None  # Style ID (e.g., "western", "japanese", "korean", "chinese")
     templates: Optional[list[TemplateOverride]] = None
     selected_template_ids: Optional[list[str]] = None  # Only generate selected templates
+    platform: Optional[str] = None  # e.g. "shopee" — applies platform-specific post-processing
 
 
 class RegenerateRequest(BaseModel):

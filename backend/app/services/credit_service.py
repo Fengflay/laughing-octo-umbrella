@@ -34,30 +34,43 @@ async def charge_credits(
 ) -> CreditTransaction:
     """Atomically deduct credits and create a transaction record.
 
+    Uses a single UPDATE with a WHERE guard (credits >= amount) to prevent
+    race conditions under concurrent requests — no separate SELECT needed.
+
     Args:
         amount: positive number of credits to deduct
     Returns:
         The CreditTransaction record
     Raises:
-        RuntimeError if insufficient balance
+        RuntimeError if insufficient balance or user not found
     """
     if amount <= 0:
         raise ValueError("Charge amount must be positive")
 
-    # Read current balance
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise RuntimeError("User not found")
-
-    if user.credits < amount:
-        raise RuntimeError(f"點數不足：需要 {amount} 點，目前餘額 {user.credits} 點")
-
-    # Deduct
-    new_balance = user.credits - amount
-    await db.execute(
-        update(User).where(User.id == user_id).values(credits=new_balance)
+    # Atomic update: deduct only if sufficient balance exists.
+    # The WHERE clause ensures no negative balance can occur even under
+    # concurrent requests — the DB engine serialises row-level writes.
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id, User.credits >= amount)
+        .values(credits=User.credits - amount)
     )
+
+    if result.rowcount == 0:
+        # Distinguish "user not found" from "insufficient balance"
+        user_result = await db.execute(
+            select(User.credits).where(User.id == user_id)
+        )
+        balance = user_result.scalar_one_or_none()
+        if balance is None:
+            raise RuntimeError("User not found")
+        raise RuntimeError(f"點數不足：需要 {amount} 點，目前餘額 {balance} 點")
+
+    # Read back the new balance for the audit log record
+    bal_result = await db.execute(
+        select(User.credits).where(User.id == user_id)
+    )
+    new_balance = bal_result.scalar_one()
 
     # Create transaction record
     tx = CreditTransaction(
@@ -70,8 +83,6 @@ async def charge_credits(
     db.add(tx)
 
     await db.commit()
-    # Refresh user object in case caller needs it
-    await db.refresh(user)
 
     logger.info(f"Charged {amount} credits from user {user_id} (balance: {new_balance})")
     return tx
@@ -84,7 +95,7 @@ async def refund_credits(
     description: str,
     job_id: Optional[str] = None,
 ) -> CreditTransaction:
-    """Refund credits to user (e.g., on total job failure).
+    """Atomically refund credits to user (e.g., on total job failure).
 
     Args:
         amount: positive number of credits to refund
@@ -92,15 +103,21 @@ async def refund_credits(
     if amount <= 0:
         raise ValueError("Refund amount must be positive")
 
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
+    # Atomic update: add credits back
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(credits=User.credits + amount)
+    )
+
+    if result.rowcount == 0:
         raise RuntimeError("User not found")
 
-    new_balance = user.credits + amount
-    await db.execute(
-        update(User).where(User.id == user_id).values(credits=new_balance)
+    # Read back the new balance for the audit log record
+    bal_result = await db.execute(
+        select(User.credits).where(User.id == user_id)
     )
+    new_balance = bal_result.scalar_one()
 
     tx = CreditTransaction(
         user_id=user_id,
@@ -112,7 +129,6 @@ async def refund_credits(
     db.add(tx)
 
     await db.commit()
-    await db.refresh(user)
 
     logger.info(f"Refunded {amount} credits to user {user_id} (balance: {new_balance})")
     return tx
