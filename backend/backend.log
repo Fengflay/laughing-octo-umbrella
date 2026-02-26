@@ -1,0 +1,6 @@
+INFO:     Started server process [23526]
+INFO:     Waiting for application startup.
+INFO:app.startup: Initializing database...
+INFO:app.startup: Database initialized successfully
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
