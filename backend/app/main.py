@@ -5,7 +5,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import CORS_ORIGINS, OUTPUT_DIR, UPLOAD_DIR
-from app.routers import auth, batch, credits, generate, history, projects, settings, upload
+from app.routers import (
+    analysis,
+    atmosphere,
+    auth,
+    batch,
+    credits,
+    detail_layout,
+    generate,
+    history,
+    optimization,
+    projects,
+    scenes,
+    settings,
+    storyboard,
+    themes,
+    upload,
+)
 
 # Configure logging so app.services.* logs are visible
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
@@ -49,6 +65,15 @@ app.include_router(history.router)
 app.include_router(credits.router)
 app.include_router(batch.router)
 app.include_router(projects.router)
+
+# V2 routers
+app.include_router(analysis.router)
+app.include_router(scenes.router)
+app.include_router(storyboard.router)
+app.include_router(optimization.router)
+app.include_router(detail_layout.router)
+app.include_router(atmosphere.router)
+app.include_router(themes.router)
 
 
 @app.on_event("startup")

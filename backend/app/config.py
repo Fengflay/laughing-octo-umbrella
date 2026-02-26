@@ -12,7 +12,7 @@ OUTPUT_DIR = BASE_DIR / "outputs"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") or "AIzaSyDBQnuu9lV8JVGGoOuMrtXiqvy-6j_P_Ho"
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")
 
 # CORS origins — comma-separated list, defaults to localhost:3000

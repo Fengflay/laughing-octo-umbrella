@@ -1,66 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { getApiKeysStatus, saveApiKeys } from "@/lib/api";
-import type { ApiKeysStatus } from "@/types";
+import { useTranslation } from "@/lib/i18n";
 
 export default function SettingsPage() {
-  const [status, setStatus] = useState<ApiKeysStatus | null>(null);
-  const [geminiKey, setGeminiKey] = useState("");
-  const [togetherKey, setTogetherKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getApiKeysStatus()
-      .then((s) => {
-        setStatus(s);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
-
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    setMessage(null);
-
-    try {
-      const params: { gemini_api_key?: string; together_api_key?: string } = {};
-      if (geminiKey.trim()) params.gemini_api_key = geminiKey.trim();
-      if (togetherKey.trim()) params.together_api_key = togetherKey.trim();
-
-      if (!params.gemini_api_key && !params.together_api_key) {
-        setMessage({ type: "error", text: "請至少輸入一個 API Key" });
-        setSaving(false);
-        return;
-      }
-
-      const newStatus = await saveApiKeys(params);
-      setStatus(newStatus);
-      setGeminiKey("");
-      setTogetherKey("");
-      setMessage({ type: "success", text: "API Key 已儲存成功！" });
-    } catch (err) {
-      setMessage({
-        type: "error",
-        text: err instanceof Error ? err.message : "儲存失敗",
-      });
-    } finally {
-      setSaving(false);
-    }
-  }, [geminiKey, togetherKey]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-500">載入中...</p>
-      </div>
-    );
-  }
+  const { t } = useTranslation();
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="max-w-2xl mx-auto space-y-8 animate-fade-in">
       <div className="flex items-center gap-4">
         <a
           href="/"
@@ -74,110 +20,55 @@ export default function SettingsPage() {
       </div>
 
       <div>
-        <h1 className="text-2xl font-bold">API Key 設定</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t.common.settings}</h1>
         <p className="text-gray-500 text-sm mt-1">
-          設定 AI 圖片生成服務的 API Key，儲存後即可開始使用
+          系统设置与服务状态
         </p>
       </div>
 
-      {/* Current status */}
-      {status && (
-        <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-          <h2 className="font-semibold text-gray-700">目前狀態</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className={`rounded-lg p-4 ${status.gemini_configured ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className={`w-2.5 h-2.5 rounded-full ${status.gemini_configured ? "bg-green-500" : "bg-red-400"}`} />
-                <span className="font-medium text-sm">Nano Banana Pro (Gemini)</span>
-              </div>
-              <p className="text-xs text-gray-500 font-mono">{status.gemini_key_preview}</p>
+      {/* AI Service Status */}
+      <div className="bg-white rounded-2xl border border-gray-200/80 p-6 shadow-sm space-y-5">
+        <h2 className="font-semibold text-gray-800">AI 服务状态</h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Gemini */}
+          <div className="rounded-xl p-4 bg-green-50 border border-green-200">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm shadow-green-500/30" />
+              <span className="font-semibold text-sm text-gray-800">Gemini Nano Banana Pro</span>
             </div>
-            <div className={`rounded-lg p-4 ${status.together_configured ? "bg-green-50 border border-green-200" : "bg-yellow-50 border border-yellow-200"}`}>
-              <div className="flex items-center gap-2 mb-1">
-                <span className={`w-2.5 h-2.5 rounded-full ${status.together_configured ? "bg-green-500" : "bg-yellow-400"}`} />
-                <span className="font-medium text-sm">Kimi K2.5 (Together AI)</span>
-              </div>
-              <p className="text-xs text-gray-500 font-mono">{status.together_key_preview}</p>
+            <p className="text-xs text-green-700 font-medium">✓ 已启用，无需配置</p>
+            <p className="text-[11px] text-gray-400 mt-1">主要图片生成服务</p>
+          </div>
+
+          {/* Together AI */}
+          <div className="rounded-xl p-4 bg-gray-50 border border-gray-200">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="w-3 h-3 rounded-full bg-gray-300" />
+              <span className="font-semibold text-sm text-gray-800">Kimi K2.5 (Together AI)</span>
             </div>
+            <p className="text-xs text-gray-500">备用服务（可选）</p>
+            <p className="text-[11px] text-gray-400 mt-1">高级场景生成备选方案</p>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Input form */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
-        <h2 className="font-semibold text-gray-700">設定 API Key</h2>
-
-        <div className="space-y-1">
-          <label className="block text-sm font-medium text-gray-700">
-            Gemini API Key
-            <span className="text-red-500 ml-1">*</span>
-          </label>
-          <p className="text-xs text-gray-400">
-            主要圖片生成服務，從{" "}
-            <a
-              href="https://aistudio.google.com/apikey"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 hover:underline"
-            >
-              Google AI Studio
-            </a>
-            {" "}取得
-          </p>
-          <input
-            type="password"
-            value={geminiKey}
-            onChange={(e) => setGeminiKey(e.target.value)}
-            placeholder="AIza..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-          />
+      {/* System Info */}
+      <div className="bg-white rounded-2xl border border-gray-200/80 p-6 shadow-sm space-y-4">
+        <h2 className="font-semibold text-gray-800">系统信息</h2>
+        <div className="space-y-3">
+          {[
+            { label: "版本", value: "v1.0.0" },
+            { label: "前端框架", value: "Next.js 15 + React 19" },
+            { label: "后端框架", value: "FastAPI + SQLAlchemy" },
+            { label: "AI 引擎", value: "Gemini Nano Banana Pro" },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+              <span className="text-sm text-gray-500">{item.label}</span>
+              <span className="text-sm font-medium text-gray-800">{item.value}</span>
+            </div>
+          ))}
         </div>
-
-        <div className="space-y-1">
-          <label className="block text-sm font-medium text-gray-700">
-            Together AI API Key
-            <span className="text-gray-400 ml-1 text-xs">(選填)</span>
-          </label>
-          <p className="text-xs text-gray-400">
-            備選 Kimi K2.5 服務，從{" "}
-            <a
-              href="https://api.together.xyz/settings/api-keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-500 hover:underline"
-            >
-              Together AI
-            </a>
-            {" "}取得
-          </p>
-          <input
-            type="password"
-            value={togetherKey}
-            onChange={(e) => setTogetherKey(e.target.value)}
-            placeholder="tok_..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
-          />
-        </div>
-
-        {message && (
-          <div
-            className={`p-3 rounded-lg text-sm ${
-              message.type === "success"
-                ? "bg-green-50 text-green-700"
-                : "bg-red-50 text-red-700"
-            }`}
-          >
-            {message.text}
-          </div>
-        )}
-
-        <button
-          onClick={handleSave}
-          disabled={saving || (!geminiKey.trim() && !togetherKey.trim())}
-          className="w-full px-4 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {saving ? "儲存中..." : "儲存 API Key"}
-        </button>
       </div>
     </div>
   );
